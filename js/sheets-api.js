@@ -405,9 +405,15 @@ async function generateSku(category) {
   const prefix = prefixMap[category] || 'SX';
   const products = await sheetsGetAllProducts();
 
-  // Auto-number only the categories approved so far: rings and bracelets.
-  // Accept both current codes (SR3571/SB0495) and legacy dashed codes.
-  if (category === '\u0e41\u0e2b\u0e27\u0e19' || category === '\u0e2a\u0e23\u0e49\u0e2d\u0e22\u0e02\u0e49\u0e2d\u0e21\u0e37\u0e2d') {
+  // Auto-number only the categories approved so far.
+  // Accept both current codes and legacy dashed codes.
+  const autoNumberCategories = [
+    '\u0e41\u0e2b\u0e27\u0e19',
+    '\u0e2a\u0e23\u0e49\u0e2d\u0e22\u0e02\u0e49\u0e2d\u0e21\u0e37\u0e2d',
+    '\u0e15\u0e48\u0e32\u0e07\u0e2b\u0e39',
+    '\u0e08\u0e35\u0e49'
+  ];
+  if (autoNumberCategories.includes(category)) {
     const skuPattern = new RegExp(`^${prefix}-?(\\d+)$`);
     const categoryNumbers = products
       .map(p => String(p.sku || '').trim().toUpperCase().match(skuPattern))
