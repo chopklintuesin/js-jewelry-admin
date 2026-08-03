@@ -657,8 +657,9 @@ function fmtPrice(n) {
   return '฿' + Number(n).toLocaleString('th-TH');
 }
 
-// ราคาโปรโมชั่น: มีโปรฯ เมื่อ promoPrice > 0 และต่ำกว่าราคาขาย
-function hasPromo(p) { return p.promoPrice > 0 && p.promoPrice < p.sellPrice; }
+function hasValidPrice(p) { return Number.isFinite(p.sellPrice) && p.sellPrice > 0; }
+// ราคาโปรโมชั่น: มีโปรฯ เมื่อมีราคาขายที่ถูกต้อง และ promoPrice ต่ำกว่าราคาขาย
+function hasPromo(p) { return hasValidPrice(p) && p.promoPrice > 0 && p.promoPrice < p.sellPrice; }
 function effPrice(p) { return hasPromo(p) ? p.promoPrice : p.sellPrice; }
 
 // รวมรูปทั้งหมดของสินค้า (รูปหลัก + รูปเพิ่มเติม)
@@ -704,8 +705,8 @@ function getFiltered() {
       p.category.toLowerCase().includes(q)
     );
   }
-  if (sortBy === 'asc')  list.sort((a,b) => effPrice(a) - effPrice(b));
-  if (sortBy === 'desc') list.sort((a,b) => effPrice(b) - effPrice(a));
+  if (sortBy === 'asc')  list.sort((a,b) => (hasValidPrice(a)?effPrice(a):Infinity) - (hasValidPrice(b)?effPrice(b):Infinity));
+  if (sortBy === 'desc') list.sort((a,b) => (hasValidPrice(b)?effPrice(b):-Infinity) - (hasValidPrice(a)?effPrice(a):-Infinity));
   return list;
 }
 
@@ -727,9 +728,11 @@ function cardHTML(p) {
   const off   = promo ? Math.round((1 - p.promoPrice / p.sellPrice) * 100) : 0;
   const saleBadge = promo ? `<span class="sale-badge">-${off}%</span>` : '';
   const newBadge = p.isNew ? `<span class="new-badge"${promo ? ' style="top:44px"' : ''}>NEW</span>` : '';
-  const priceHTML = promo
-    ? `<span class="card-price-old">${fmtPrice(p.sellPrice)}</span><span class="card-price promo">${fmtPrice(p.promoPrice)}</span>`
-    : `<span class="card-price">${fmtPrice(p.sellPrice)}</span>`;
+  const priceHTML = !hasValidPrice(p)
+    ? `<span class="card-price">สอบถามราคา</span>`
+    : promo
+      ? `<span class="card-price-old">${fmtPrice(p.sellPrice)}</span><span class="card-price promo">${fmtPrice(p.promoPrice)}</span>`
+      : `<span class="card-price">${fmtPrice(p.sellPrice)}</span>`;
 
   return `
   <article class="card" onclick="openModal('${p.sku}')" tabindex="0"
@@ -910,7 +913,9 @@ function openModal(sku) {
   document.getElementById('js-modal-sku').textContent  = 'รหัสสินค้า: ' + p.sku;
 
   const priceEl = document.getElementById('js-modal-price');
-  if (hasPromo(p)) {
+  if (!hasValidPrice(p)) {
+    priceEl.textContent = 'สอบถามราคา';
+  } else if (hasPromo(p)) {
     const off = Math.round((1 - p.promoPrice / p.sellPrice) * 100);
     priceEl.innerHTML = `<span class="modal-price-old">${fmtPrice(p.sellPrice)}</span><span style="color:#c0271e">${fmtPrice(p.promoPrice)}</span><span class="modal-save-badge">-${off}%</span>`;
   } else {

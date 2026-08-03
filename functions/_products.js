@@ -89,7 +89,8 @@ export function getYouTubeEmbedUrl(value){
     return '';
   }
 }
-export const hasPromo = p => p.promoPrice>0 && p.promoPrice<p.sellPrice;
+export const hasValidPrice = p => Number.isFinite(p.sellPrice) && p.sellPrice>0;
+export const hasPromo = p => hasValidPrice(p) && p.promoPrice>0 && p.promoPrice<p.sellPrice;
 export const effPrice = p => hasPromo(p) ? p.promoPrice : p.sellPrice;
 export function fmtPrice(n){ return '฿'+Number(n||0).toLocaleString('en-US'); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -98,7 +99,7 @@ export function renderProductPage(p){
   const imgs = [p.imageUrl,p.imageUrl2,p.imageUrl3].map(getImgUrl).filter(Boolean);
   const mainImg = imgs[0] || `${SITE}/Image%20logo.png`;
   const emoji = CAT_EMOJI[p.category] || '💎';
-  const price = effPrice(p), promo = hasPromo(p);
+  const price = effPrice(p), validPrice = hasValidPrice(p), promo = hasPromo(p);
   const off = promo ? Math.round((1-p.promoPrice/p.sellPrice)*100) : 0;
   const url = `${SITE}/p/${encodeURIComponent(p.sku)}`;
   const inStock = p.status==='พร้อมขาย';
@@ -106,7 +107,8 @@ export function renderProductPage(p){
   const embedUrl = getYouTubeEmbedUrl(vurl);
   const desc = (p.highlight && p.highlight.trim() && p.highlight.trim()!=='-') ? p.highlight.trim()
              : (p.notes && p.notes.trim()!=='-' ? p.notes.trim() : '');
-  const metaDesc = (`${p.name}${p.material?(' '+p.material):''}${p.gemType?(' พลอย'+p.gemType):''} ราคา ${fmtPrice(price)} — JS Jewelry เครื่องประดับเงินแท้ 925 & พลอยแท้ พร้อมส่ง สั่งซื้อผ่าน LINE`+(desc?(' · '+desc):'')).replace(/\s+/g,' ').trim().slice(0,300);
+  const priceLabel = validPrice ? 'ราคา '+fmtPrice(price) : 'สอบถามราคา';
+  const metaDesc = (`${p.name}${p.material?(' '+p.material):''}${p.gemType?(' พลอย'+p.gemType):''} ${priceLabel} — JS Jewelry เครื่องประดับเงินแท้ 925 & พลอยแท้ พร้อมส่ง สั่งซื้อผ่าน LINE`+(desc?(' · '+desc):'')).replace(/\s+/g,' ').trim().slice(0,300);
 
   const rows=[];
   if(p.material) rows.push(['วัสดุ',p.material]);
@@ -124,17 +126,19 @@ export function renderProductPage(p){
     "name":p.name, "sku":p.sku, "category":p.category,
     "image": imgs.length?imgs:[mainImg],
     "description": (desc || metaDesc).slice(0,300),
-    "brand":{"@type":"Brand","name":"JS Jewelry"},
-    "offers":{"@type":"Offer","priceCurrency":"THB","price":String(price),
-      "availability": inStock?"https://schema.org/InStock":"https://schema.org/OutOfStock",
-      "url":url,"seller":{"@type":"Organization","name":"JS Jewelry"}}
+    "brand":{"@type":"Brand","name":"JS Jewelry"}
   };
+  if(validPrice) jsonld.offers={"@type":"Offer","priceCurrency":"THB","price":String(price),
+    "availability": inStock?"https://schema.org/InStock":"https://schema.org/OutOfStock",
+    "url":url,"seller":{"@type":"Organization","name":"JS Jewelry"}};
   if(p.material && p.material.includes('925')) jsonld.material='เงินแท้ 925';
 
   const title = `${p.name} (${p.sku}) | JS Jewelry เงินแท้ 925`;
   const lineMsg = `สนใจสินค้า ${p.sku}`;
   const thumbs = imgs.length>1 ? `<div class="thumbs">${imgs.map(u=>`<img src="${esc(u)}" alt="${esc(p.name)}" onclick="document.querySelector('.main').src=this.src" loading="lazy">`).join('')}</div>` : '';
-  const priceHtml = promo ? `<span class="old">${fmtPrice(p.sellPrice)}</span><span class="price promo">${fmtPrice(price)}</span><span class="badge">-${off}%</span>` : `<span class="price">${fmtPrice(price)}</span>`;
+  const priceHtml = !validPrice ? `<span class="price">สอบถามราคา</span>` : (promo ? `<span class="old">${fmtPrice(p.sellPrice)}</span><span class="price promo">${fmtPrice(price)}</span><span class="badge">-${off}%</span>` : `<span class="price">${fmtPrice(price)}</span>`);
+  const priceMetaHtml = validPrice ? `<meta property="product:price:amount" content="${price}">`+
+    `<meta property="product:price:currency" content="THB">` : '';
   const rowsHtml = rows.map(([l,v])=>`<div class="row"><span class="l">${esc(l)}</span><span class="v">${esc(v)}</span></div>`).join('');
   const descHtml = desc ? `<div class="desc">${esc(desc)}</div>` : '';
   const videoHtml = embedUrl
@@ -185,8 +189,7 @@ export function renderProductPage(p){
 <meta property="og:description" content="${esc(metaDesc)}">
 <meta property="og:image" content="${esc(mainImg)}">
 <meta property="og:url" content="${esc(url)}">
-<meta property="product:price:amount" content="${price}">
-<meta property="product:price:currency" content="THB">
+${priceMetaHtml}
 <meta name="twitter:card" content="summary_large_image">
 <script type="application/ld+json">${JSON.stringify(jsonld)}</script>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">

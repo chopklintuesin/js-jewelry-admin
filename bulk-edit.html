@@ -89,6 +89,12 @@ tr:hover td{background:var(--gold-bg)}
     </div>
   </div>
 
+  <div class="panel">
+    <h2>🔧 ซ่อมชนิดข้อมูลราคาใน Google Sheet</h2>
+    <p class="muted" style="margin-bottom:12px">ตรวจเฉพาะคอลัมน์ I ราคาทุน · J ราคาขาย · T ราคาโปรฯ และแปลงตัวเลขที่เก็บเป็นข้อความให้เป็นตัวเลขจริง โดยไม่เปลี่ยนยอด ไม่แตะสต็อก และไม่แตะสูตร</p>
+    <button class="btn btn-gold" id="btn-price-scan" onclick="scanPriceTypes()">🔍 ตรวจสอบและ Preview</button>
+    <div id="price-repair-preview" style="display:none;margin-top:14px"></div>
+  </div>
   <div class="panel" id="preview-panel" style="display:none">
     <h2>③ ตรวจสอบก่อนบันทึก</h2>
     <div id="preview-area"></div>
@@ -163,6 +169,104 @@ async function loadProducts(){
 }
 
 /* ═══ ① เทมเพลต ═══ */
+/* ═══ ซ่อมชนิดข้อมูลราคา I/J/T (ข้อความตัวเลข → ตัวเลขจริง) ═══ */
+const PRICE_TYPE_FIELDS = [
+  {key:'costPrice',col:'I',idx:8,label:'ราคาทุน'},
+  {key:'sellPrice',col:'J',idx:9,label:'ราคาขาย'},
+  {key:'promotionPrice',col:'T',idx:19,label:'ราคาโปรฯ'}
+];
+let pendingPriceRepairs=[], repairSheetId=null, repairBasicFilter=false;
+
+function numericTextToNumber(value){
+  if(typeof value!=='string') return null;
+  const clean=value.replace(/[฿,\s]/g,'');
+  if(!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(clean)) return null;
+  const n=Number(clean);
+  return Number.isFinite(n) && n>=0 ? n : null;
+}
+
+async function getPriceRepairState(){
+  const [rawResp,formulaResp,metaResp] = await Promise.all([
+    gapi.client.sheets.spreadsheets.values.get({spreadsheetId:CONFIG.SHEET_ID,range:CONFIG.SHEET+'!A:T',valueRenderOption:'UNFORMATTED_VALUE'}),
+    gapi.client.sheets.spreadsheets.values.get({spreadsheetId:CONFIG.SHEET_ID,range:CONFIG.SHEET+'!A:T',valueRenderOption:'FORMULA'}),
+    gapi.client.sheets.spreadsheets.get({spreadsheetId:CONFIG.SHEET_ID,fields:'sheets(properties(sheetId,title),basicFilter)'})
+  ]);
+  const rawRows=rawResp.result.values||[], formulaRows=formulaResp.result.values||[];
+  const changes=[];
+  for(let i=1;i<rawRows.length;i++){
+    const rawRow=rawRows[i]||[], formulaRow=formulaRows[i]||[];
+    const sku=String(rawRow[SKU_IDX]||'').trim();
+    if(!sku) continue;
+    PRICE_TYPE_FIELDS.forEach(f=>{
+      const raw=rawRow[f.idx], formula=formulaRow[f.idx];
+      const numberValue=numericTextToNumber(raw);
+      const isFormula=typeof formula==='string' && formula.trim().startsWith('=');
+      if(numberValue!==null && !isFormula){
+        changes.push({row:i+1,sku,name:String(rawRow[NAME_IDX]||''),col:f.col,key:f.key,label:f.label,oldValue:raw,newValue:numberValue});
+      }
+    });
+  }
+  const sheet=(metaResp.result.sheets||[]).find(x=>x.properties&&x.properties.title===CONFIG.SHEET);
+  return {changes,sheetId:sheet&&sheet.properties.sheetId,basicFilter:!!(sheet&&sheet.basicFilter)};
+}
+
+function renderPriceRepair(state,message){
+  pendingPriceRepairs=state.changes;
+  repairSheetId=state.sheetId;
+  repairBasicFilter=state.basicFilter;
+  const box=document.getElementById('price-repair-preview');
+  const counts={I:0,J:0,T:0};
+  state.changes.forEach(x=>counts[x.col]++);
+  const sample=state.changes.slice(0,80);
+  const rows=sample.map(x=>`<tr><td><b>${esc(x.sku)}</b></td><td>${esc(x.name)}</td><td>${esc(x.label)} (${x.col})</td><td>${esc(x.oldValue)} <span class="muted">ข้อความ</span></td><td>→</td><td class="new-v">${esc(x.newValue)} <span class="muted">ตัวเลข</span></td></tr>`).join('');
+  const table=sample.length ? `<div class="tbl-wrap"><table><tr><th>SKU</th><th>ชื่อ</th><th>ช่อง</th><th>เดิม</th><th></th><th>ใหม่</th></tr>${rows}</table></div>${state.changes.length>sample.length?`<p class="muted" style="margin-top:6px">แสดง 80 รายการแรกจาก ${state.changes.length} เซลล์</p>`:''}` : '';
+  const ready=state.changes.length>0 || state.basicFilter;
+  box.innerHTML=`${message?`<p class="tag tag-ok" style="margin-bottom:10px">${esc(message)}</p>`:''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <span class="summary-chip">I ราคาทุน ${counts.I}</span><span class="summary-chip">J ราคาขาย ${counts.J}</span><span class="summary-chip">T ราคาโปรฯ ${counts.T}</span>
+      <span class="summary-chip">Basic filter: ${state.basicFilter?'เปิดอยู่ — จะปิด':'ไม่เปิด'}</span>
+    </div>${table}
+    <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-outline" onclick="scanPriceTypes()">↻ ตรวจใหม่</button>
+      <button class="btn btn-green" onclick="confirmPriceNormalization()" ${ready?'':'disabled'}>✔ ยืนยันซ่อม ${state.changes.length} เซลล์${state.basicFilter?' + ปิด Filter':''}</button>
+    </div>
+    ${ready?'<p class="muted" style="margin-top:6px">ระบบเขียนเฉพาะ I/J/T ที่เป็นข้อความตัวเลข และตรวจซ้ำหลังบันทึก</p>':'<p class="tag tag-ok" style="margin-top:8px">✅ ชนิดข้อมูลราคาถูกต้อง และไม่มี Basic filter ค้าง</p>'}`;
+  box.style.display='block';
+}
+
+async function scanPriceTypes(message){
+  const btn=document.getElementById('btn-price-scan');
+  try{
+    btn.disabled=true; toast('กำลังตรวจชนิดข้อมูลราคา…');
+    const state=await getPriceRepairState();
+    renderPriceRepair(state,message||'');
+  }catch(e){ console.error(e); toast('ตรวจราคาไม่สำเร็จ: '+errMsg(e),'err'); }
+  finally{ btn.disabled=false; }
+}
+
+async function confirmPriceNormalization(){
+  if(!pendingPriceRepairs.length && !repairBasicFilter) return;
+  if(!confirm(`ยืนยันแปลง ${pendingPriceRepairs.length} เซลล์เป็นตัวเลขจริง${repairBasicFilter?' และปิด Basic filter':''}?`)) return;
+  try{
+    toast('กำลังตรวจข้อมูลล่าสุดก่อนบันทึก…');
+    const fresh=await getPriceRepairState();
+    pendingPriceRepairs=fresh.changes; repairSheetId=fresh.sheetId; repairBasicFilter=fresh.basicFilter;
+    const chunkSize=400;
+    for(let i=0;i<pendingPriceRepairs.length;i+=chunkSize){
+      const data=pendingPriceRepairs.slice(i,i+chunkSize).map(x=>({range:`${CONFIG.SHEET}!${x.col}${x.row}`,values:[[x.newValue]]}));
+      await gapi.client.sheets.spreadsheets.values.batchUpdate({spreadsheetId:CONFIG.SHEET_ID,resource:{valueInputOption:'RAW',data}});
+    }
+    if(repairBasicFilter){
+      if(repairSheetId==null) throw new Error('ไม่พบ sheetId ของ Products — ยังไม่ปิด Filter');
+      await gapi.client.sheets.spreadsheets.batchUpdate({spreadsheetId:CONFIG.SHEET_ID,resource:{requests:[{clearBasicFilter:{sheetId:repairSheetId}}]}});
+    }
+    const changed=pendingPriceRepairs.length;
+    const verify=await getPriceRepairState();
+    renderPriceRepair(verify,verify.changes.length===0&&!verify.basicFilter?`บันทึกและตรวจซ้ำแล้ว ${changed} เซลล์`:'ยังพบรายการค้าง กรุณาตรวจอีกครั้ง');
+    if(verify.changes.length||verify.basicFilter) toast('ยังมีข้อมูลค้างหลังบันทึก — กรุณาตรวจ Preview','err');
+    else toast(`✅ ซ่อมและตรวจซ้ำแล้ว ${changed} เซลล์`,'ok');
+  }catch(e){ console.error(e); toast('ซ่อมราคาไม่สำเร็จ: '+errMsg(e),'err'); await scanPriceTypes(); }
+}
 function downloadTemplate(){
   if(!products.length){ toast('ยังไม่มีข้อมูลสินค้า','err'); return; }
   const header = ['sku','name'].concat(FIELDS.map(f=>f.key));
